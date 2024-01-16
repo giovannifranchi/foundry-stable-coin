@@ -17,11 +17,17 @@ contract STCEngine is ReentrancyGuard {
     error STCEngine__MustBeMoreThanZero();
     error STCEngine__CollateralTransferFailed();
     error STCEngine__LenghtsNotEqual();
+    error STCEngine__BrokenHealthFactor(uint256 _healthFactor);
+    error STCEngine__STCMintingFailed();
 
     // state variables
     uint256 private constant DECIMALS_FOR_PRICE_FEED = 10e10;
     uint256 private constant DECIMALS_PRECISION = 10e18;
-    StabilityCoin private immutable stc;
+    uint256 private constant LIQUIDATION_THRESHOLD = 50; // 200% OVERCOLLATERALIZED, it says that only 50% of the collateral is considered
+    uint256 private constant LIQUIDATION_PRECISION = 100;
+    uint256 private constant MIN_HEALTH_FACTOR = 1; 
+
+    StabilityCoin private immutable i_stc;
     mapping(address token => address priceFeed) private s_tokenToPriceFeed;
     mapping(address user => mapping(address token => uint256)) private s_userToTokenToCollateral;
     mapping(address user => uint256 sbcMinted) private s_userToSBCMinted;
@@ -31,6 +37,11 @@ contract STCEngine is ReentrancyGuard {
     event STCEngine__DepositCollateral(
         address indexed _user,
         address indexed _token,
+        uint256 indexed _amount
+    );
+
+    event STCEngine__STCMinted(
+        address indexed _user,
         uint256 indexed _amount
     );
 
@@ -68,7 +79,7 @@ contract STCEngine is ReentrancyGuard {
             s_tokenToPriceFeed[_supportedTokens[i]] = _priceFeeds[i];
             s_supportedTokens.push(_supportedTokens[i]);
         }
-        stc = StabilityCoin(_stc);
+        i_stc = StabilityCoin(_stc);
     }
 
     function depositCollateralForSTC() external {}
@@ -118,7 +129,16 @@ contract STCEngine is ReentrancyGuard {
      * @dev it has to check the amount of collateral deposited
      * @param _amount amount of STC to mint
      */
-    function mintSTC(uint256 _amount) external moreThanZero(_amount) {}
+    function mintSTC(uint256 _amount) external moreThanZero(_amount) {
+        s_userToSBCMinted[msg.sender] += _amount;
+        _revertIfHelthFactorIsBroken(msg.sender);
+
+        bool minted = i_stc.mint(msg.sender, _amount);
+        if (!minted) {
+            revert STCEngine__STCMintingFailed();
+        }
+        emit STCEngine__STCMinted(msg.sender, _amount);
+    }
 
     function burnSTC() external {}
 
@@ -134,7 +154,21 @@ contract STCEngine is ReentrancyGuard {
      * @return health factor of the user
      * @dev if health factor is less than 1, the user is insolvent threrefore he can be liquidated
      */
-    function _getHealthFactor(address _user) private view returns (uint256) {}
+    function _getHealthFactor(address _user) private view returns (uint256) {
+        (uint256 totalSBCMinted, uint256 totalCollateralDeposited) = _getAccountInformation(_user);
+        uint256 totalCollateralAdjustedForThreshold = (totalCollateralDeposited * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        uint256 healthFactor = (totalCollateralAdjustedForThreshold * DECIMALS_PRECISION) / totalSBCMinted;
+        return healthFactor;
+        // $150 eth / 100 stc = 1.5
+        // 150 * 50 = 7500 / 100 = (75/100) < 1 
+    }
+
+    function _revertIfHelthFactorIsBroken(address _user) private view {
+        uint256 healthFactor = _getHealthFactor(_user);
+        if (healthFactor < MIN_HEALTH_FACTOR) {
+            revert STCEngine__BrokenHealthFactor(healthFactor);
+        }
+    }
 
     function _getAccountInformation(
         address _user
@@ -155,16 +189,19 @@ contract STCEngine is ReentrancyGuard {
         view
         returns (uint256)
     {
-        uint256 totalCollateralDeposited;
+        uint256 totalCollateralDepositedInUsd;
         for(uint256 i = 0; i < s_supportedTokens.length; i++){
             address token = s_supportedTokens[i];
             uint256 collateralDeposited = s_userToTokenToCollateral[_user][token];
-            uint256 collateralValue = _getCollateralValue(token, collateralDeposited);
-            totalCollateralDeposited += collateralValue;
+            uint256 collateralValue = getUsdlValue(token, collateralDeposited);
+            totalCollateralDepositedInUsd += collateralValue;
         }
 
-        return totalCollateralDeposited;
+        return totalCollateralDepositedInUsd;
     }
+
+
+    // public and external view functions
 
 
     /**
@@ -173,8 +210,8 @@ contract STCEngine is ReentrancyGuard {
      * @param _token address of the token
      * @return price of the token
      */
-    function _getCollateralValue(address _token, uint256 _amount)
-        private
+    function getUsdlValue(address _token, uint256 _amount)
+        public
         view
         returns (uint256)
     {
