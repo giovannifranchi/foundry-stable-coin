@@ -11,7 +11,7 @@ contract DeploySTC is Script {
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
 
-    function run() external returns (StabilityCoin, STCEngine) {
+    function run() external returns (StabilityCoin, STCEngine, HelperConfig) {
         HelperConfig helperConfig = new HelperConfig();
 
         (
@@ -36,6 +36,6 @@ contract DeploySTC is Script {
 
         stc.transferOwnership(address(stcEngine));
         vm.stopBroadcast();
-        return (stc, stcEngine);
+        return (stc, stcEngine, helperConfig);
     }
 }

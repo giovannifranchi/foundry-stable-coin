@@ -222,4 +222,8 @@ contract STCEngine is ReentrancyGuard {
 
         return ((uint256(price) * DECIMALS_FOR_PRICE_FEED) * _amount) / DECIMALS_PRECISION;
     }
+
+    function getUserToSTCMinted(address _user) external view returns (uint256) {
+        return s_userToSBCMinted[_user];
+    }
 }
