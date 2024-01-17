@@ -17,13 +17,15 @@ contract STCEngine is ReentrancyGuard {
     error STCEngine__BrokenHealthFactor(uint256 _healthFactor);
     error STCEngine__STCMintingFailed();
     error STCEngine__STCTransferFailed();
+    error STCEngine__HealtyUser();
 
     // state variables
     uint256 private constant DECIMALS_FOR_PRICE_FEED = 10e10;
     uint256 private constant DECIMALS_PRECISION = 10e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50; // 200% OVERCOLLATERALIZED, it says that only 50% of the collateral is considered
     uint256 private constant LIQUIDATION_PRECISION = 100;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 private constant LIQUIDATION_BONUS = 10; // 10% bonus for liquidators
 
     StabilityCoin private immutable i_stc;
     mapping(address token => address priceFeed) private s_tokenToPriceFeed;
@@ -133,13 +135,12 @@ contract STCEngine is ReentrancyGuard {
         );
     }
 
-
     /**
-        * @notice redeem collateral for a specific token and burn STC
-        * @param _tokenCollateral address of the collateral token
-        * @param _amountCollateral amount of collateral to withdraw
-        * @param _amountSTC amount of STC to burn
-        * @notice it already checks the health factor of the user
+     * @notice redeem collateral for a specific token and burn STC
+     * @param _tokenCollateral address of the collateral token
+     * @param _amountCollateral amount of collateral to withdraw
+     * @param _amountSTC amount of STC to burn
+     * @notice it already checks the health factor of the user
      */
     function redeemCollateralForSTC(
         address _tokenCollateral,
@@ -193,6 +194,13 @@ contract STCEngine is ReentrancyGuard {
         emit STCEngine__STCMinted(msg.sender, _amount);
     }
 
+    /**
+     * @notice burn STC tokens
+     * @dev it follows the CEI pattern (check, effects, interactions)
+     * @dev it has to check the health factor of the user
+     * @dev it has to check the amount of collateral deposited
+     * @param _amount amount of STC to burn
+     */
     function burnSTC(uint256 _amount) public moreThanZero(_amount) {
         s_userToSBCMinted[msg.sender] -= _amount;
         bool success = i_stc.transferFrom(msg.sender, address(this), _amount);
@@ -203,7 +211,27 @@ contract STCEngine is ReentrancyGuard {
         _revertIfHelthFactorIsBroken(msg.sender); // it shouldn't be necessary
     }
 
-    function liquidate() external {}
+    /**
+     * @notice liquidate a user
+     * @param _tokenCollateral address of the collateral token
+     * @param _user address of the user to liquidate
+     * @param _debtToCover amount of debt to cover
+     * @notice it incetives other users to liquidate the user with liquidation bonuses
+     * @notice this is why overcollateralization is important 10% bonus
+     */
+    function liquidate(
+        address _tokenCollateral,
+        address _user,
+        uint256 _debtToCover
+    ) external moreThanZero(_debtToCover) nonReentrant {
+        uint256 healthFactor = _getHealthFactor(_user);
+        if(healthFactor >= MIN_HEALTH_FACTOR) {
+            revert STCEngine__HealtyUser();
+        }
+        uint256 tokenAmountFromCoveredDebt = getTokenAmountFromUsd(_tokenCollateral, _debtToCover);
+        uint256 bonusAmount = (tokenAmountFromCoveredDebt * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+        uint256 totalAmountToLiquidate = tokenAmountFromCoveredDebt + bonusAmount;
+    }
 
     function getHealthFactor() external view returns (uint256) {}
 
@@ -290,5 +318,16 @@ contract STCEngine is ReentrancyGuard {
 
     function getUserToSTCMinted(address _user) external view returns (uint256) {
         return s_userToSBCMinted[_user];
+    }
+
+    function getTokenAmountFromUsd(
+        address _token,
+        uint256 _usdAmountInWei
+    ) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(
+            s_tokenToPriceFeed[_token]
+        );
+        (, int256 price, , , ) = priceFeed.latestRoundData();
+        return (_usdAmountInWei * DECIMALS_PRECISION) / (uint256(price) * DECIMALS_FOR_PRICE_FEED);
     }
 }
