@@ -9,6 +9,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
 import {ISTCEngine} from "./interfaces/ISTCEngine.sol";
 
 contract STCEngine is ReentrancyGuard {
@@ -61,12 +62,12 @@ contract STCEngine is ReentrancyGuard {
     }
 
     /**
-     * @notice constructor
-     * @param _supportedTokens array of supported tokens
-     * @param _priceFeeds array of price feeds for the supported tokens
-     * @param _stc address of the STC token
-     * @dev lenghts of _supportedTokens and _priceFeeds must be equal
-     */
+        * @notice constructor
+        * @param _supportedTokens array of supported tokens
+        * @param _priceFeeds array of price feeds for the supported tokens
+        * @param _stc address of the STC token
+        * @dev lenghts of _supportedTokens and _priceFeeds must be equal
+    */
     constructor(
         address[] memory _supportedTokens,
         address[] memory _priceFeeds,
@@ -82,20 +83,29 @@ contract STCEngine is ReentrancyGuard {
         i_stc = StabilityCoin(_stc);
     }
 
-    function depositCollateralForSTC() external {}
+    /**
+        * @notice deposit collateral for a specific token and mint STC
+        * @param _tokenCollateral address of the collateral token
+        * @param _collateralAmount amount of collateral to deposit
+        * @param _STCAmount amount of STC to mint
+    */
+    function depositCollateralForSTC(address _tokenCollateral, uint256 _collateralAmount, uint256 _STCAmount) external {
+        depositCollateral(_collateralAmount, _tokenCollateral);
+        mintSTC(_STCAmount);
+    }
 
     /**
-     * @notice deposit collateral for a specific token
-     * @dev it follows the CEI pattern (check, effects, interactions)
-     * @dev it is not reentrant for precaution but could be superfluos
-     * @param _amountDeposited amount of collateral to deposit
-     * @param _tokenCollateral address of the collateral token
-     */
+        * @notice deposit collateral for a specific token
+        * @dev it follows the CEI pattern (check, effects, interactions)
+        * @dev it is not reentrant for precaution but could be superfluos
+        * @param _amountDeposited amount of collateral to deposit
+        * @param _tokenCollateral address of the collateral token
+    */
     function depositCollateral(
         uint256 _amountDeposited,
         address _tokenCollateral
     )
-        external
+        public
         moreThanZero(_amountDeposited)
         supportedToken(_tokenCollateral)
         nonReentrant
@@ -123,13 +133,13 @@ contract STCEngine is ReentrancyGuard {
     function withdrawCollateral() external {}
 
     /**
-     * @notice mint STC tokens
-     * @dev it follows the CEI pattern (check, effects, interactions)
-     * @dev it has to check the health factor of the user
-     * @dev it has to check the amount of collateral deposited
-     * @param _amount amount of STC to mint
-     */
-    function mintSTC(uint256 _amount) external moreThanZero(_amount) {
+        * @notice mint STC tokens
+        * @dev it follows the CEI pattern (check, effects, interactions)
+        * @dev it has to check the health factor of the user
+        * @dev it has to check the amount of collateral deposited
+        * @param _amount amount of STC to mint
+    */
+    function mintSTC(uint256 _amount) public moreThanZero(_amount) {
         s_userToSBCMinted[msg.sender] += _amount;
         _revertIfHelthFactorIsBroken(msg.sender);
 
@@ -149,11 +159,11 @@ contract STCEngine is ReentrancyGuard {
     // internal & private functions
 
     /**
-     * @notice get the health factor of a user
-     * @param _user address of the user
-     * @return health factor of the user
-     * @dev if health factor is less than 1, the user is insolvent threrefore he can be liquidated
-     */
+        * @notice get the health factor of a user
+        * @param _user address of the user
+        * @return health factor of the user
+        * @dev if health factor is less than 1, the user is insolvent threrefore he can be liquidated
+    */
     function _getHealthFactor(address _user) private view returns (uint256) {
         (uint256 totalSBCMinted, uint256 totalCollateralDeposited) = _getAccountInformation(_user);
         uint256 totalCollateralAdjustedForThreshold = (totalCollateralDeposited * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
@@ -182,7 +192,7 @@ contract STCEngine is ReentrancyGuard {
     }
 
     /**
-    * @notice get the total collateral deposited by a user in terms of USD
+        * @notice get the total collateral deposited by a user in terms of USD
     */
     function _getTotalCollateralDeposited(address _user)
         private
@@ -205,11 +215,11 @@ contract STCEngine is ReentrancyGuard {
 
 
     /**
-     * @dev it gets price feeds from chainlink aggregator
-     * @notice get the price of a token in terms of USD
-     * @param _token address of the token
-     * @return price of the token
-     */
+        * @dev it gets price feeds from chainlink aggregator
+        * @notice get the price of a token in terms of USD
+        * @param _token address of the token
+        * @return price of the token
+    */
     function getUsdlValue(address _token, uint256 _amount)
         public
         view
