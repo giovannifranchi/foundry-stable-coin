@@ -49,6 +49,13 @@ contract STCEngine is ReentrancyGuard {
         uint256 indexed _amount
     );
 
+    event STCEngine__CollateralRedeemedFrom(
+        address indexed _from,
+        address indexed _to,
+        address indexed _token,
+        uint256 _amount
+    );
+
     // modifiers
     modifier moreThanZero(uint256 _amount) {
         if (_amount <= 0) {
@@ -163,16 +170,7 @@ contract STCEngine is ReentrancyGuard {
         uint256 _amount,
         address _tokenCollateral
     ) public moreThanZero(_amount) nonReentrant {
-        s_userToTokenToCollateral[msg.sender][_tokenCollateral] -= _amount;
-        emit STCEngine__CollateralRedeemed(
-            msg.sender,
-            _tokenCollateral,
-            _amount
-        );
-        bool success = IERC20(_tokenCollateral).transfer(msg.sender, _amount);
-        if (!success) {
-            revert STCEngine__CollateralTransferFailed();
-        }
+        _redeemCollateral(_tokenCollateral, _amount, msg.sender, msg.sender);
         _revertIfHelthFactorIsBroken(msg.sender);
     }
 
@@ -202,12 +200,7 @@ contract STCEngine is ReentrancyGuard {
      * @param _amount amount of STC to burn
      */
     function burnSTC(uint256 _amount) public moreThanZero(_amount) {
-        s_userToSBCMinted[msg.sender] -= _amount;
-        bool success = i_stc.transferFrom(msg.sender, address(this), _amount);
-        if (!success) {
-            revert STCEngine__STCTransferFailed();
-        }
-        i_stc.burn(_amount);
+        _burnSTC(_amount, msg.sender, msg.sender);
         _revertIfHelthFactorIsBroken(msg.sender); // it shouldn't be necessary
     }
 
@@ -225,12 +218,32 @@ contract STCEngine is ReentrancyGuard {
         uint256 _debtToCover
     ) external moreThanZero(_debtToCover) nonReentrant {
         uint256 healthFactor = _getHealthFactor(_user);
-        if(healthFactor >= MIN_HEALTH_FACTOR) {
+        if (healthFactor >= MIN_HEALTH_FACTOR) {
             revert STCEngine__HealtyUser();
         }
-        uint256 tokenAmountFromCoveredDebt = getTokenAmountFromUsd(_tokenCollateral, _debtToCover);
-        uint256 bonusAmount = (tokenAmountFromCoveredDebt * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
-        uint256 totalAmountToLiquidate = tokenAmountFromCoveredDebt + bonusAmount;
+        uint256 tokenAmountFromCoveredDebt = getTokenAmountFromUsd(
+            _tokenCollateral,
+            _debtToCover
+        );
+        uint256 bonusAmount = (tokenAmountFromCoveredDebt * LIQUIDATION_BONUS) /
+            LIQUIDATION_PRECISION;
+        uint256 totalAmountToLiquidate = tokenAmountFromCoveredDebt +
+            bonusAmount;
+        _redeemCollateral(
+            _tokenCollateral,
+            totalAmountToLiquidate,
+            _user,
+            msg.sender
+        );
+        _burnSTC(_debtToCover, _user, msg.sender);
+
+        uint256 finalUserHealthFactor = _getHealthFactor(_user);
+
+        if (finalUserHealthFactor <= healthFactor) {
+            revert STCEngine__BrokenHealthFactor(finalUserHealthFactor);
+        }
+
+        _revertIfHelthFactorIsBroken(msg.sender);
     }
 
     function getHealthFactor() external view returns (uint256) {}
@@ -294,6 +307,43 @@ contract STCEngine is ReentrancyGuard {
         return totalCollateralDepositedInUsd;
     }
 
+    function _redeemCollateral(
+        address _tokenCollateralAddress,
+        uint256 _amount,
+        address _from,
+        address _to
+    ) private {
+        s_userToTokenToCollateral[_from][_tokenCollateralAddress] -= _amount;
+        emit STCEngine__CollateralRedeemedFrom(
+            _from,
+            _to,
+            _tokenCollateralAddress,
+            _amount
+        );
+        bool success = IERC20(_tokenCollateralAddress).transfer(_to, _amount);
+        if (!success) {
+            revert STCEngine__CollateralTransferFailed();
+        }
+        _revertIfHelthFactorIsBroken(msg.sender);
+    }
+
+    /**
+     * @dev low-level burn function
+     */
+    function _burnSTC(
+        uint256 _amount,
+        address _onBehalfOf,
+        address _stcFrom
+    ) private {
+        s_userToSBCMinted[_onBehalfOf] -= _amount;
+        bool success = i_stc.transferFrom(_stcFrom, address(this), _amount);
+        if (!success) {
+            revert STCEngine__STCTransferFailed();
+        }
+        i_stc.burn(_amount);
+        _revertIfHelthFactorIsBroken(msg.sender); // it shouldn't be necessary
+    }
+
     // public and external view functions
 
     /**
@@ -328,6 +378,8 @@ contract STCEngine is ReentrancyGuard {
             s_tokenToPriceFeed[_token]
         );
         (, int256 price, , , ) = priceFeed.latestRoundData();
-        return (_usdAmountInWei * DECIMALS_PRECISION) / (uint256(price) * DECIMALS_FOR_PRICE_FEED);
+        return
+            (_usdAmountInWei * DECIMALS_PRECISION) /
+            (uint256(price) * DECIMALS_FOR_PRICE_FEED);
     }
 }
