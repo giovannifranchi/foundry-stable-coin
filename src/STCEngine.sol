@@ -246,8 +246,6 @@ contract STCEngine is ReentrancyGuard {
         _revertIfHelthFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor() external view returns (uint256) {}
-
     // internal & private functions
 
     /**
