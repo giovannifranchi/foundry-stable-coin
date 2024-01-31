@@ -261,6 +261,9 @@ contract STCEngine is ReentrancyGuard {
         ) = _getAccountInformation(_user);
         uint256 totalCollateralAdjustedForThreshold = (totalCollateralDeposited *
                 LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        if(totalSBCMinted == 0) {
+            totalSBCMinted = type(uint256).max;
+        }
         uint256 healthFactor = (totalCollateralAdjustedForThreshold *
             DECIMALS_PRECISION) / totalSBCMinted;
         return healthFactor;
